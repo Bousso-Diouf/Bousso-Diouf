@@ -1,18 +1,43 @@
-name: GitHub Actions Demo
-run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
-on: [push]
+name: Laravel CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Permet d'exécuter le workflow manuellement
+
 jobs:
-  Explore-GitHub-Actions:
+  laravel-tests:
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
-      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
-      - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
-      - name: Check out repository code
+      - name: 🛎️ Cloner le dépôt
         uses: actions/checkout@v4
-      - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
-      - run: echo "🖥️ The workflow is now ready to test your code on the runner."
-      - name: List files in the repository
-        run: |
-          ls ${{ github.workspace }}
-      - run: echo "🍏 This job's status is ${{ job.status }}."
+
+      - name: 🔧 Installer PHP et ses extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, intl, pdo, bcmath
+          tools: composer:v2
+
+      - name: ⚡ Mettre à jour Composer
+        run: composer self-update
+
+      - name: 📦 Installer les dépendances
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: 🗄️ Copier le fichier .env
+        run: cp .env.example .env
+
+      - name: 🔑 Générer la clé d'application
+        run: php artisan key:generate
+
+      - name: 🏗️ Exécuter les migrations
+        run: php artisan migrate --force
+
+      - name: 🚀 Lancer les tests avec PHPUnit
+        run: vendor/bin/phpunit --testdox
