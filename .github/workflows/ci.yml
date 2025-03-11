@@ -18,7 +18,7 @@
     checkout:
       stage: checkout
       script:
-        - git clone https://gitlab.com/your-repository-url.git
+        - git clone https://gitlab.com/https://github.com/Bousso-Diouf/Bousso-Diouf
     
     # 2. Build du projet (Installation des dépendances PHP)
     build:
