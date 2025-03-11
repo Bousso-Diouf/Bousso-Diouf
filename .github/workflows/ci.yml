@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
@@ -11,9 +11,9 @@ on:
       - develop
 
 jobs:
+  # 📌 1. Build et Tests
   build-and-test:
     runs-on: ubuntu-latest
-
     steps:
       - name: 🔄 Checkout Repository
         uses: actions/checkout@v4
@@ -40,6 +40,70 @@ jobs:
       - name: 🎨 Run Laravel Pint (Code Formatting)
         run: vendor/bin/pint --test
 
+  # 📌 2. Build et Push Docker (pour tous les environnements)
+  docker-build-and-push:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔄 Checkout Repository
+        uses: actions/checkout@v4
+
       - name: 🐳 Build Docker Image
+        run: docker build -t monprojet/laravel-microservice .
+
+      - name: 🔑 Login to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: 🚀 Push Docker Image
         run: |
-          docker build -t monprojet/laravel-microservice .
+          docker tag monprojet/laravel-microservice monrepo/laravel-microservice:${{ github.sha }}
+          docker push monrepo/laravel-microservice:${{ github.sha }}
+
+  # 📌 3. Déploiement sur Docker pour Dev
+  deploy-dev:
+    needs: docker-build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚀 Deploy to Docker (Dev)
+        run: |
+          docker pull monrepo/laravel-microservice:${{ github.sha }}
+          docker run -d --name laravel-dev -p 8000:80 monrepo/laravel-microservice:${{ github.sha }}
+
+  # 📌 4. Déploiement sur Kubernetes pour Staging
+  deploy-staging:
+    needs: docker-build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚀 Deploy to Kubernetes (Staging)
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+          kubectl rollout status deployment/laravel-microservice
+
+  # 📌 5. Déploiement sur le cloud pour Préprod & Prod
+  deploy-preprod-prod:
+    needs: docker-build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 🚀 Deploy to Cloud Server
+        run: |
+          ssh ubuntu@${{ secrets.CLOUD_SERVER_IP }} << EOF
+            docker pull monrepo/laravel-microservice:${{ github.sha }}
+            docker stop laravel-prod || true
+            docker rm laravel-prod || true
+            docker run -d --name laravel-prod -p 80:80 monrepo/laravel-microservice:${{ github.sha }}
+          EOF
+
+  # 📌 6. Monitoring (Ajout d'une plateforme maison pour Prod)
+  monitoring:
+    needs: deploy-preprod-prod
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📊 Setup Monitoring (CPU, RAM, Disk, Requests, Logs)
+        run: |
+          echo "Collecting metrics..."
+          echo "CPU Usage: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%" > monitoring.log
+          echo "Memory Usage: $(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2 }')" >> monitoring.log
+          echo "Disk Usage: $(df -h | awk '$NF=="/"{printf "%s", $5}')" >> monitoring.log
+          echo "Requests per Hour: $(cat /var/log/nginx/access.log | wc -l)" >> monitoring.log
+          cat monitoring.log
