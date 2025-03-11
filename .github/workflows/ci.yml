@@ -1,98 +1,94 @@
-name: CI/CD Pipeline for Microservices
-
-on:
-  push:
-    branches:
-      - main
-      - dev
-      - staging
-      - preprod
-      - prod
-  pull_request:
-    branches:
-      - main
-      - dev
-      - staging
-      - preprod
-      - prod
-  workflow_dispatch:  # Permet de lancer le workflow manuellement
-
-jobs:
-  build:
-    name: 🏗️ Build & Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 🛎️ Cloner le dépôt
-        uses: actions/checkout@v4
-
-      - name: 🔧 Installer Docker et Docker Compose
-        run: |
-          sudo apt update
-          sudo apt install -y docker.io docker-compose
-
-      - name: 🏗️ Construire l’image Docker
-        run: docker build -t my-microservice:${{ github.sha }} .
-
-      - name: 🚀 Lancer les tests
-        run: docker run --rm my-microservice:${{ github.sha }} php artisan test
-
-      - name: 📦 Pousser l’image Docker (si sur `main`, `staging`, `preprod` ou `prod`)
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/preprod' || github.ref == 'refs/heads/prod'
-        run: |
-          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-          docker tag my-microservice:${{ github.sha }} myrepo/my-microservice:${{ github.sha }}
-          docker push myrepo/my-microservice:${{ github.sha }}
-
-  deploy-dev:
-    name: 🚀 Deploy to Dev (Docker)
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/dev'
-
-    steps:
-      - name: 📦 Déploiement sur Docker
-        run: |
-          docker pull myrepo/my-microservice:${{ github.sha }}
-          docker run -d -p 8000:8000 myrepo/my-microservice:${{ github.sha }}
-
-  deploy-staging:
-    name: 🚀 Deploy to Staging (Kubernetes)
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/staging'
-
-    steps:
-      - name: 🔧 Installer kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-
-      - name: 🚀 Déploiement sur Kubernetes
-        run: |
-          kubectl config set-cluster staging-cluster --server=${{ secrets.K8S_SERVER }} --insecure-skip-tls-verify=true
-          kubectl config set-credentials staging-user --token=${{ secrets.K8S_TOKEN }}
-          kubectl config set-context staging-context --cluster=staging-cluster --user=staging-user
-          kubectl config use-context staging-context
-          kubectl set image deployment/my-microservice my-microservice=myrepo/my-microservice:${{ github.sha }}
-          kubectl rollout status deployment my-microservice
-
-  deploy-prod:
-    name: 🚀 Deploy to Preprod & Prod (Cloud Server)
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/preprod' || github.ref == 'refs/heads/prod'
-
-    steps:
-      - name: 🔑 Connexion au serveur
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.CLOUD_SERVER_IP }}
-          username: ${{ secrets.CLOUD_SERVER_USER }}
-          key: ${{ secrets.CLOUD_SERVER_SSH_KEY }}
-          script: |
-            docker pull myrepo/my-microservice:${{ github.sha }}
-            docker stop my-microservice || true
-            docker rm my-microservice || true
-            docker run -d --name my-microservice -p 8000:8000 myrepo/my-microservice:${{ github.sha }}
+    stages:
+      - checkout
+      - build
+      - unit_tests
+      - ui_tests
+      - code_quality
+      - package
+      - docker_build
+      - deploy_artifact
+      - docker_push
+      - provision
+      - deploy
+    
+    variables:
+      DOCKER_DRIVER: overlay2
+    
+    # 1. Récupération du code source depuis GitLab
+    checkout:
+      stage: checkout
+      script:
+        - git clone https://gitlab.com/your-repository-url.git
+    
+    # 2. Build du projet (Installation des dépendances PHP)
+    build:
+      stage: build
+      script:
+        - apt-get update && apt-get install -y git unzip curl
+        - curl -sS https://getcomposer.org/installer | php
+        - php composer.phar install --no-dev --prefer-dist
+    
+    # 3. Exécution des tests unitaires (Tests PHPUnit)
+    unit_tests:
+      stage: unit_tests
+      script:
+        - vendor/bin/phpunit --config phpunit.xml
+    
+    # 4. Exécution des tests IHM (Exemple avec Cypress)
+    ui_tests:
+      stage: ui_tests
+      script:
+        - npm install
+        - npm run cypress:run
+    
+    # 5. Vérification de la qualité du code (SonarQube, PHPStan, etc.)
+    code_quality:
+      stage: code_quality
+      script:
+        - vendor/bin/phpstan analyse --level=max src/
+    
+    # 6. Packaging de l'artéfact (Générer le paquet Laravel)
+    package:
+      stage: package
+      script:
+        - php artisan config:cache
+        - php artisan route:cache
+        - php artisan view:cache
+    
+    # 7. Création d'une image Docker pour le projet
+    docker_build:
+      stage: docker_build
+      script:
+        - docker build -t myapp:$CI_COMMIT_SHA .
+    
+    # 8. Dépôt de l'artefact dans un repository local pour Dev et Staging
+    deploy_artifact_dev_staging:
+      stage: deploy_artifact
+      only:
+        - dev
+        - staging
+      script:
+        - mvn deploy -DrepositoryId=local-repository -Durl=http://local-repository-url
+    
+    # 9. Push de l'image Docker dans un registry (local pour Dev/Staging, distant pour Préprod/Prod)
+    docker_push:
+      stage: docker_push
+      script:
+        - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+        - docker push $CI_REGISTRY/myapp:$CI_COMMIT_SHA
+    
+    # 10. Provisioning automatique de l'environnement cible
+    provision:
+      stage: provision
+      script:
+        - terraform init
+        - terraform apply -auto-approve
+    
+    # 11. Déploiement automatique des microservices dans l'environnement cible (Kubernetes, Docker Compose, etc.)
+    deploy:
+      stage: deploy
+      script:
+        - kubectl apply -f k8s/deployment.yaml
+      only:
+        - master
+        - staging
